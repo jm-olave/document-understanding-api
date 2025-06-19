@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  marqo:
+    image: marqoai/marqo:latest
+    ports:
+      - "8882:8882"
+    environment:
+      - MARQO_ENABLE_BATCH_APIS=True
+    volumes:
+      - marqo_data:/opt/vespa/var
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MARQO_URL=http://marqo:8882
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./api/uploads:/app/uploads
+      - ./sample_documents:/app/sample_documents
+    depends_on:
+      - marqo
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  marqo_data:
