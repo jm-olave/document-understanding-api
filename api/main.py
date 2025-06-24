@@ -1,225 +1,118 @@
-from langchain.schema import HumanMessage
-import json
-import re
-from typing import Dict, Any, List
+# api/main.py
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import uvicorn
+from contextlib import asynccontextmanager
 from loguru import logger
-from ..core.config import settings
-from ..models.schemas import EntityExtractionResponse
+import sys
 
-class EntityExtractionService:
-    def __init__(self):
-        self.llm = ChatOpenAI(
-            model_name=settings.DEFAULT_LLM_MODEL,
-            temperature=0.1,
-            openai_api_key=settings.OPENAI_API_KEY
-        )
-        self.prompt_templates = self._create_prompt_templates()
-    
-    def _create_prompt_templates(self) -> Dict[str, PromptTemplate]:
-        """Create prompt templates for different document types"""
-        templates = {}
-        
-        base_template = """
-You are an expert document analyzer. Extract specific information from the given document text.
+from app.core.config import settings
+from app.routes.document_router import router as document_router
+from app.core.exceptions import DocumentProcessingException
 
-Document Type: {document_type}
-Required Fields: {field_list}
+# Configure logging
+logger.remove()
+logger.add(sys.stdout, level="INFO", format="{time} | {level} | {message}")
 
-Instructions:
-1. Extract ONLY the requested fields from the document
-2. Return the information as a valid JSON object
-3. Use null for fields that cannot be found or determined
-4. Be precise and accurate with the extracted values
-5. For dates, use YYYY-MM-DD format
-6. For monetary amounts, include currency symbol
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan manager"""
+    logger.info("Starting Intelligent Document Understanding API")
+    
+    # Startup
+    try:
+        # Initialize services here if needed
+        logger.info("API startup completed successfully")
+        yield
+    except Exception as e:
+        logger.error(f"Startup failed: {str(e)}")
+        raise
+    finally:
+        # Cleanup
+        logger.info("API shutdown completed")
 
-Document Text:
-{document_text}
+# Create FastAPI application
+app = FastAPI(
+    title=settings.API_TITLE,
+    version=settings.API_VERSION,
+    description=settings.API_DESCRIPTION,
+    lifespan=lifespan
+)
 
-Return only the JSON object with no additional text:
-"""
-        
-        # Create specific templates for each document type
-        for doc_type in settings.DOCUMENT_TYPES.keys():
-            templates[doc_type] = PromptTemplate(
-                input_variables=["document_type", "field_list", "document_text"],
-                template=base_template
-            )
-        
-        return templates
-    
-    async def extract_entities(
-        self, 
-        text: str, 
-        document_type: str
-    ) -> EntityExtractionResponse:
-        """Extract entities from document text using LLM"""
-        try:
-            logger.info(f"Extracting entities for document type: {document_type}")
-            
-            # Get fields for this document type
-            fields = settings.DOCUMENT_TYPES.get(document_type, [])
-            if not fields:
-                logger.warning(f"No fields defined for document type: {document_type}")
-                return EntityExtractionResponse(entities={})
-            
-            # Create prompt
-            prompt = self._create_extraction_prompt(text, document_type, fields)
-            
-            # Get LLM response
-            response = await self._get_llm_response(prompt)
-            
-            # Parse JSON response
-            entities = self._parse_json_response(response)
-            
-            # Validate and clean entities
-            cleaned_entities = self._validate_entities(entities, fields)
-            
-            return EntityExtractionResponse(
-                entities=cleaned_entities,
-                confidence_scores=self._calculate_confidence_scores(cleaned_entities)
-            )
-            
-        except Exception as e:
-            logger.error(f"Entity extraction failed: {str(e)}")
-            return EntityExtractionResponse(entities={})
-    
-    def _create_extraction_prompt(
-        self, 
-        text: str, 
-        document_type: str, 
-        fields: List[str]
-    ) -> str:
-        """Create extraction prompt for the given document"""
-        template = self.prompt_templates.get(document_type)
-        if not template:
-            template = self.prompt_templates["invoice"]  # Use default template
-        
-        return template.format(
-            document_type=document_type.title(),
-            field_list=", ".join(fields),
-            document_text=text[:4000]  # Limit text length for LLM
-        )
-    
-    async def _get_llm_response(self, prompt: str) -> str:
-        """Get response from LLM"""
-        try:
-            message = HumanMessage(content=prompt)
-            response = await self.llm.agenerate([[message]])
-            return response.generations[0][0].text.strip()
-        except Exception as e:
-            logger.error(f"LLM request failed: {str(e)}")
-            raise
-    
-    def _parse_json_response(self, response: str) -> Dict[str, Any]:
-        """Parse JSON response from LLM"""
-        try:
-            # Try to extract JSON from response
-            json_match = re.search(r'\{.*\}', response, re.DOTALL)
-            if json_match:
-                json_str = json_match.group()
-                return json.loads(json_str)
-            else:
-                # Try parsing the entire response as JSON
-                return json.loads(response)
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {str(e)}")
-            logger.error(f"Raw response: {response}")
-            return {}
-    
-    def _validate_entities(
-        self, 
-        entities: Dict[str, Any], 
-        expected_fields: List[str]
-    ) -> Dict[str, Any]:
-        """Validate and clean extracted entities"""
-        validated = {}
-        
-        for field in expected_fields:
-            value = entities.get(field)
-            
-            # Clean and validate the value
-            if value is not None and str(value).strip():
-                cleaned_value = str(value).strip()
-                if cleaned_value.lower() not in ['null', 'none', 'n/a', '']:
-                    validated[field] = self._clean_field_value(field, cleaned_value)
-                else:
-                    validated[field] = None
-            else:
-                validated[field] = None
-        
-        return validated
-    
-    def _clean_field_value(self, field_name: str, value: str) -> str:
-        """Clean specific field values based on field type"""
-        # Date fields
-        if 'date' in field_name.lower():
-            return self._clean_date_value(value)
-        
-        # Amount fields
-        if any(word in field_name.lower() for word in ['amount', 'total', 'balance', 'value']):
-            return self._clean_amount_value(value)
-        
-        # Phone fields
-        if 'phone' in field_name.lower():
-            return self._clean_phone_value(value)
-        
-        return value
-    
-    def _clean_date_value(self, value: str) -> str:
-        """Clean date values"""
-        # Remove extra whitespace and common prefixes
-        value = re.sub(r'^(date:?|on:?)\s*', '', value, flags=re.IGNORECASE)
-        return value.strip()
-    
-    def _clean_amount_value(self, value: str) -> str:
-        """Clean monetary amount values"""
-        # Remove extra whitespace and common prefixes
-        value = re.sub(r'^(total:?|amount:?|sum:?)\s*', '', value, flags=re.IGNORECASE)
-        return value.strip()
-    
-    def _clean_phone_value(self, value: str) -> str:
-        """Clean phone number values"""
-        # Remove non-numeric characters except + and -
-        return re.sub(r'[^\d\+\-\(\)\s]', '', value)
-    
-    def _calculate_confidence_scores(
-        self, 
-        entities: Dict[str, Any]
-    ) -> Dict[str, float]:
-        """Calculate confidence scores for extracted entities"""
-        confidence_scores = {}
-        
-        for field, value in entities.items():
-            if value is None:
-                confidence_scores[field] = 0.0
-            else:
-                # Simple heuristic for confidence scoring
-                confidence = 0.8  # Base confidence
-                
-                # Adjust based on value characteristics
-                if len(str(value)) < 3:
-                    confidence -= 0.2
-                elif len(str(value)) > 50:
-                    confidence -= 0.1
-                
-                # Specific field adjustments
-                if 'date' in field.lower() and self._is_valid_date_format(str(value)):
-                    confidence += 0.1
-                
-                if any(word in field.lower() for word in ['amount', 'total']) and ' in str(value):
-                    confidence += 0.1
-                
-                confidence_scores[field] = min(1.0, max(0.0, confidence))
-        
-        return confidence_scores
-    
-    def _is_valid_date_format(self, value: str) -> bool:
-        """Check if value looks like a valid date"""
-        date_patterns = [
-            r'\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
-            r'\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
-            r'\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
-        ]
-        
-        return any(re.search(pattern, value) for pattern in date_patterns)
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(document_router, prefix="/api/v1", tags=["documents"])
+
+# Global exception handlers
+@app.exception_handler(DocumentProcessingException)
+async def document_processing_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "Document Processing Error",
+            "detail": str(exc),
+            "type": "document_processing_error"
+        }
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "HTTP Error",
+            "detail": exc.detail,
+            "type": "http_error"
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    logger.error(f"Unhandled exception: {str(exc)}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "detail": "An unexpected error occurred",
+            "type": "internal_error"
+        }
+    )
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "api_version": settings.API_VERSION,
+        "timestamp": "2024-01-01T00:00:00Z"
+    }
+
+# Root endpoint
+@app.get("/")
+async def root():
+    """Root endpoint with API information"""
+    return {
+        "message": "Intelligent Document Understanding API",
+        "version": settings.API_VERSION,
+        "docs_url": "/docs",
+        "health_url": "/health"
+    }
+
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

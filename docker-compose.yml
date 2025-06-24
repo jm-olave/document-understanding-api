@@ -21,10 +21,20 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./api/uploads:/app/uploads
-      - ./sample_documents:/app/sample_documents
+      - ./archive/docs-sm:/app/archive/docs-sm
     depends_on:
       - marqo
     restart: unless-stopped
+    develop:
+      watch:
+        - action: sync
+          path: ./api
+          target: /app
+          ignore:
+            - "__pycache__/"
+            - "*.pyc"
+        - action: rebuild
+          path: ./api/requirements.txt
 
   ui:
     build:
@@ -33,7 +43,7 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - API_URL=http://api:8000
+      - API_URL=http://api:8000/api/v1
     depends_on:
       - api
     restart: unless-stopped

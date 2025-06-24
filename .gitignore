@@ -1,0 +1,22 @@
+# Environments
+.env
+docenv/
+venv/
+*.venv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Archives
+archive/
+*.zip
+
+# Documents
+*.pdf
+
+# IDE / Editor
+.vscode/
+.idea/ 
