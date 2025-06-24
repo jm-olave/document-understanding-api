@@ -150,4 +150,64 @@ The project was tested using various document types included in the `archive/doc
 The invoice images, in particular, were sourced from the **High-Quality Invoice Images for OCR** dataset available on Kaggle:
 [https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr](https://www.kaggle.com/datasets/osamahosamabdellatif/high-quality-invoice-images-for-ocr)
 
-The original Kaggle link provided in the challenge description was unavailable, so this alternative dataset was used for development and testing. 
+The original Kaggle link provided in the challenge description was unavailable, so this alternative dataset was used for development and testing.
+
+## 🏛️ Tech Stack and Architecture
+
+This project uses a modern, containerized architecture to deliver a robust and scalable solution.
+
+### Tech Stack
+
+*   **Backend (API)**:
+    *   **Python 3.12**: The core programming language.
+    *   **FastAPI**: A high-performance web framework for building the API, chosen for its speed, automatic interactive documentation (Swagger UI), and modern Python features like type hints.
+    *   **Loguru**: A library for adding simple and powerful logging to the application.
+*   **Frontend (UI)**:
+    *   **Streamlit**: A Python framework for building and sharing data apps. It was chosen for its simplicity and the ability to create a functional UI with minimal code.
+*   **AI & Machine Learning**:
+    *   **OpenAI API**: Used for the core intelligence of the application. GPT models are prompted to perform document classification and entity extraction.
+    *   **LangChain**: Acts as a framework to simplify interactions with the LLM, making it easier to build and manage prompts and chains.
+    *   **Marqo**: An open-source vector search engine used to store document embeddings and find similar documents. It provides a simple, API-first way to manage a vector database.
+    *   **pdf2image & Tesseract OCR**: Used under the hood to convert PDF and image files into raw text that can be processed by the LLM.
+*   **Containerization**:
+    *   **Docker & Docker Compose**: The entire application is containerized, ensuring a consistent environment for development and deployment. This simplifies setup and dependency management.
+
+### Software Architecture
+
+The application is designed with a service-oriented architecture, separating the user interface from the backend processing logic.
+
+```mermaid
+graph TD;
+    subgraph "User"
+        U[End User]
+    end
+
+    subgraph "UI Service (Streamlit)"
+        S[Web Interface]
+    end
+
+    subgraph "API Service (FastAPI)"
+        A[API Endpoints]
+        W[Internal Workflow]
+        A --> W
+    end
+    
+    subgraph "External Services"
+        M[Marqo Vector DB]
+        O[OpenAI API]
+    end
+
+    U -- "Uploads Document" --> S
+    S -- "HTTP Request" --> A
+    W -- "Classification/Extraction" --> O
+    W -- "Vector Storage/Search" --> M
+```
+
+**Workflow:**
+1.  The **End User** interacts with the **Streamlit Web Interface** to upload a document.
+2.  The UI service sends an HTTP request containing the file to the **FastAPI Service**.
+3.  The API's **Internal Workflow** is triggered:
+    *   It first performs OCR on the document.
+    *   It then sends the extracted text to the **OpenAI API** to get the document's classification and extract relevant entities.
+    *   Finally, it converts the document text into a vector embedding and stores it in the **Marqo Vector DB** for future similarity searches.
+4.  The extracted data is returned to the UI and displayed to the user. 
